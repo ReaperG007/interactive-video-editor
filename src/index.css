@@ -1,0 +1,200 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bricolage Grotesque", "IBM Plex Sans", sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-ink: #0b0d10;
+  --color-panel: #12151a;
+  --color-panel2: #171b22;
+  --color-raise: #1f242d;
+  --color-line: #262c36;
+  --color-line2: #333b48;
+  --color-fg: #e9ecf1;
+  --color-mut: #97a1af;
+  --color-dim: #66707e;
+  --color-amber: #ffb224;
+  --color-ember: #ff6b4a;
+  --color-sky: #4cc3ff;
+  --color-mint: #3ddc97;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-fg);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(255, 178, 36, 0.35);
+}
+
+/* ---------- scrollbars ---------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #333b48 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #333b48;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- top scrub slider (frame-by-frame) ---------- */
+.scrub {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 22px;
+  background: transparent;
+  cursor: ew-resize;
+}
+.scrub::-webkit-slider-runnable-track {
+  height: 2px;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.95) var(--fill, 0%),
+    rgba(255, 255, 255, 0.3) var(--fill, 0%)
+  );
+}
+.scrub::-moz-range-track {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.3);
+}
+.scrub::-moz-range-progress {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.95);
+}
+.scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 8px;
+  height: 20px;
+  margin-top: -9px;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 12px rgba(255, 255, 255, 0.45);
+  transition: transform 0.12s ease;
+}
+.scrub:hover::-webkit-slider-thumb,
+.scrub:active::-webkit-slider-thumb {
+  transform: scaleY(1.15);
+}
+.scrub::-moz-range-thumb {
+  width: 8px;
+  height: 20px;
+  border: none;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 12px rgba(255, 255, 255, 0.45);
+}
+
+/* ---------- small range inputs in sidebar ---------- */
+.mini-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--color-line2);
+  outline: none;
+}
+.mini-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-amber);
+  border: 2px solid #0b0d10;
+  cursor: pointer;
+}
+.mini-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-amber);
+  border: 2px solid #0b0d10;
+  cursor: pointer;
+}
+
+/* ---------- animations ---------- */
+@keyframes card-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-18px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+@keyframes card-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(18px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 178, 36, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(255, 178, 36, 0);
+  }
+}
+
+.anim-card-left {
+  animation: card-in-left 0.45s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+.anim-card-right {
+  animation: card-in-right 0.45s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+.anim-fade-up {
+  animation: fade-up 0.4s ease both;
+}
+.anim-toast {
+  animation: toast-in 0.3s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+.rec-dot {
+  animation: pulse-ring 1.6s ease-out infinite;
+}
