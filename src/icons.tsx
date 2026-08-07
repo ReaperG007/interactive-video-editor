@@ -15,6 +15,11 @@ import {
   Sun,
   Star,
   Eye,
+  MessageCircle,
+  Send,
+  Mail,
+  Phone,
+  MapPin,
   type LucideIcon,
 } from "lucide-react";
 import type { IconName } from "./types";
@@ -36,6 +41,12 @@ export const ICONS: Record<IconName, LucideIcon> = {
   sun: Sun,
   star: Star,
   eye: Eye,
+  whatsapp: MessageCircle,
+  telegram: Send,
+  email: Mail,
+  chat: MessageCircle,
+  contact: Phone,
+  location: MapPin,
 };
 
 export const ICON_OPTIONS: { value: IconName; label: string }[] = [
@@ -55,4 +66,10 @@ export const ICON_OPTIONS: { value: IconName; label: string }[] = [
   { value: "sun", label: "Sun" },
   { value: "star", label: "Star" },
   { value: "eye", label: "View" },
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "telegram", label: "Telegram" },
+  { value: "email", label: "Email" },
+  { value: "chat", label: "Chat" },
+  { value: "contact", label: "Contact" },
+  { value: "location", label: "Location" },
 ];

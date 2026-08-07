@@ -17,6 +17,7 @@ import {
 import type {
   CueButton,
   CueGroup,
+  FrameRate,
   InfoCard,
   LinkCard,
   Project,
@@ -193,13 +194,125 @@ function Seg<T extends string>({
   );
 }
 
-function readFile(e: React.ChangeEvent<HTMLInputElement>, cb: (url: string) => void) {
+/** Compress & resize images to a reasonable max width before storing as base64. */
+function compressImage(
+  file: File,
+  maxDim = 1000,
+  quality = 0.75,
+): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.naturalWidth;
+        let h = img.naturalHeight;
+        if (w > maxDim || h > maxDim) {
+          const scale = maxDim / Math.max(w, h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function readFile(e: React.ChangeEvent<HTMLInputElement>, cb: (url: string) => void) {
   const f = e.target.files?.[0];
   if (!f) return;
-  const r = new FileReader();
-  r.onload = () => cb(r.result as string);
-  r.readAsDataURL(f);
+  cb(await compressImage(f));
   e.target.value = "";
+}
+
+function GalleryEditor({
+  images,
+  onChange,
+}: {
+  images: string[];
+  onChange: (imgs: string[]) => void;
+}) {
+  const setAt = (i: number, v: string) =>
+    onChange(images.map((x, j) => (j === i ? v : x)));
+  const removeAt = (i: number) => onChange(images.filter((_, j) => j !== i));
+
+  return (
+    <div className="rounded-md border border-line bg-panel p-2.5">
+      <div className="mb-1.5 flex items-center justify-between">
+        <Label>Gallery overlay (1–5 images)</Label>
+        <button
+          onClick={() =>
+            images.length < 5 && onChange([...images, ""])
+          }
+          disabled={images.length >= 5}
+          className="font-mono text-[10px] uppercase tracking-wider text-amber underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:text-dim"
+        >
+          + image
+        </button>
+      </div>
+      <p className="mb-2 text-[10px] leading-relaxed text-dim">
+        After this cue's end time, a centered swipeable frame shows these
+        images. Add up to 5.
+      </p>
+
+      {images.length === 0 ? (
+        <div className="grid place-items-center rounded border border-dashed border-line2 py-3 text-[10px] text-dim">
+          No images — add one below
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {images.map((img, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              {img ? (
+                <img
+                  src={img}
+                  alt=""
+                  className="h-9 w-12 shrink-0 rounded object-cover ring-1 ring-line"
+                />
+              ) : (
+                <span className="grid h-9 w-12 shrink-0 place-items-center rounded bg-panel2 text-dim ring-1 ring-line">
+                  <ImagePlus className="h-4 w-4" />
+                </span>
+              )}
+              <input
+                value={img.startsWith("data:") ? "(uploaded image)" : img}
+                onChange={(e) => setAt(i, e.target.value)}
+                placeholder={`Image ${i + 1} URL`}
+                className={cn(inputCls, "font-mono text-[10px]")}
+              />
+              <label
+                className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-md border border-line bg-panel2 text-dim hover:border-amber/50 hover:text-amber"
+                title={`Upload image ${i + 1}`}
+              >
+                <Upload className="h-3.5 w-3.5" />
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) =>
+                    readFile(e, (u) => setAt(i, u))
+                  }
+                />
+              </label>
+              <button
+                onClick={() => removeAt(i)}
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-dim hover:bg-ember/15 hover:text-ember"
+                title="Remove image"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ============================ video tab ============================ */
@@ -618,6 +731,13 @@ function ButtonsTab({
                 {b.end == null ? "+ end" : "no end"}
               </button>
             </div>
+
+            <div className="mt-2">
+              <GalleryEditor
+                images={b.gallery ?? []}
+                onChange={(gallery) => update(b.id, { gallery })}
+              />
+            </div>
           </div>
         );
       })}
@@ -798,6 +918,18 @@ function ButtonsTab({
                             c.id === cue.id
                               ? { ...c, end: Math.round(player.time * 10) / 10 }
                               : c
+                          ),
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="mt-2">
+                    <GalleryEditor
+                      images={cue.gallery ?? []}
+                      onChange={(gallery) =>
+                        updateGroup(group.id, {
+                          subCues: group.subCues.map((c) =>
+                            c.id === cue.id ? { ...c, gallery } : c
                           ),
                         })
                       }
@@ -1091,6 +1223,24 @@ function CardsTab({
               </select>
             </div>
 
+            <div className="mb-2">
+              <Label>Icon</Label>
+              <select
+                value={l.icon || ""}
+                onChange={(e) => updateLink(l.id, { icon: (e.target.value || undefined) as LinkCard["icon"] })}
+                className={cn(inputCls, "text-xs")}
+              >
+                <option value="">Default (link)</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="telegram">Telegram</option>
+                <option value="email">Email</option>
+                <option value="chat">Chat</option>
+                <option value="contact">Contact</option>
+                <option value="location">Location</option>
+                <option value="map">Map</option>
+              </select>
+            </div>
+
             <Swatches value={l.color} onChange={(col) => updateLink(l.id, { color: col })} />
           </div>
         ))}
@@ -1163,6 +1313,25 @@ function SliderTab({
         <span className="text-mut">frame by frame</span>. Pick what the label
         next to it displays.
       </p>
+
+      <div>
+        <Label>Frame precision</Label>
+        <select
+          value={s.fps}
+          onChange={(e) => set({ fps: Number(e.target.value) as FrameRate })}
+          className={cn(inputCls, "font-mono text-xs")}
+          aria-label="Frame rate"
+        >
+          {[30, 40, 50, 60].map((fps) => (
+            <option key={fps} value={fps}>
+              {fps} FPS
+            </option>
+          ))}
+        </select>
+        <p className="mt-1.5 text-[10px] leading-relaxed text-dim">
+          Controls frame stepping and scrub precision. Video playback speed stays native.
+        </p>
+      </div>
 
       <div>
         <Label>Label mode</Label>
@@ -1314,8 +1483,16 @@ function SliderTab({
       {/* ----- scrub window ----- */}
       <div className="border-t border-line pt-4">
         <h4 className="mb-2 flex items-center gap-2 font-display text-sm font-bold">
-          <Crosshair className="h-4 w-4 text-amber" /> Scrub window
+          <Crosshair className="h-4 w-4 text-amber" /> Start play
         </h4>
+        <Switch
+          value={s.autoPlay}
+          onChange={(v) => set({ autoPlay: v })}
+          label="Auto-play on load"
+        />
+        <p className="mb-2 text-[10px] leading-relaxed text-dim">
+          Plays the assigned time section automatically when the scene starts.
+        </p>
         <Switch
           value={s.limitEnabled}
           onChange={(v) => set({ limitEnabled: v })}
@@ -1324,8 +1501,8 @@ function SliderTab({
         {s.limitEnabled && (
           <>
             <p className="mt-2 text-[11px] leading-relaxed text-dim">
-              The top slider and playback stay inside this window — useful for
-              looping one moment of the footage.
+              The top slider and playback stay inside this assigned time
+              section — useful for looping one moment of the footage.
             </p>
             <div className="mt-2 flex gap-2">
               <TimeField

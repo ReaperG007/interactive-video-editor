@@ -31,6 +31,8 @@ export const DEFAULT_PROJECT: Project = {
     limitStart: 0,
     limitEnd: 40,
     sceneMode: true,
+    autoPlay: true,
+    fps: 30,
     scenes: [
       { id: "s1", label: "Morning", start: 0, end: 12, color: "#ffb224" },
       { id: "s2", label: "Midday", start: 12, end: 26, color: "#4cc3ff" },
@@ -42,7 +44,11 @@ export const DEFAULT_PROJECT: Project = {
     { id: "b2", label: "Bird", icon: "bird", start: 8, end: 16, color: "#4cc3ff" },
     { id: "b3", label: "Satellite", icon: "satellite", start: 16, end: 24, color: "#3ddc97" },
     { id: "b4", label: "Units", icon: "units", start: 24, end: 32, color: "#ff6b4a" },
-    { id: "b5", label: "Gallery", icon: "gallery", start: 32, end: null, color: "#e8eaed" },
+    { id: "b5", label: "Gallery", icon: "gallery", start: 32, end: null, color: "#e8eaed", gallery: [
+      "https://images.pexels.com/photos/6585598/pexels-photo-6585598.jpeg?auto=compress&cs=tinysrgb&fit=crop&h=627&w=1200",
+      "https://images.pexels.com/photos/8135492/pexels-photo-8135492.jpeg?auto=compress&cs=tinysrgb&fit=crop&h=627&w=1200",
+      "https://images.pexels.com/photos/8089172/pexels-photo-8089172.jpeg?auto=compress&cs=tinysrgb&fit=crop&h=627&w=1200",
+    ] },
   ],
   cueGroups: [
     {
