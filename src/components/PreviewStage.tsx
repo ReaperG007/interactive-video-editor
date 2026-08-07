@@ -2,22 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Download,
   ExternalLink,
   Eye,
-  Hand,
   Hexagon,
   Info,
   Loader2,
   Maximize,
   Minimize,
   RefreshCw,
+  Hand,
   RotateCw,
   Sun,
-  Volume2,
-  VolumeX,
   X,
 } from "lucide-react";
-import type { Project } from "../types";
+import type { CueButton, Project } from "../types";
 import type { Player } from "../hooks/usePlayer";
 import { ICONS } from "../icons";
 import { fmtClock, fmtTime } from "../utils/time";
@@ -32,6 +33,8 @@ interface Props {
   onToggleCards: () => void;
   onExitPresent: () => void;
   onCue?: (id: string) => void;
+  onExport?: () => void;
+  exporting?: boolean;
 }
 
 export default function PreviewStage({
@@ -43,16 +46,26 @@ export default function PreviewStage({
   onToggleCards,
   onExitPresent,
   onCue,
+  onExport,
+  exporting,
 }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
   const wasPlaying = useRef(false);
+  const autoPlayed = useRef(false);
+  const [tapStart, setTapStart] = useState(false);
   const [fs, setFs] = useState(false);
   const [rot, setRot] = useState<0 | 90 | 180 | 270>(0);
   const [box, setBox] = useState({ w: 16, h: 9 });
   const [infoOpen, setInfoOpen] = useState(false);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
-  const [touchStarted, setTouchStarted] = useState(false);
   const [sceneIdx, setSceneIdx] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [scrubVal, setScrubVal] = useState<number | null>(null);
+  const scrubSession = useRef(false);
+  const [gallery, setGallery] = useState<{ cue: CueButton; idx: number } | null>(null);
+  const pendingCue = useRef<CueButton | null>(null);
+  const galleryShown = useRef(false);
+  const swipeStart = useRef<number | null>(null);
   const lastWheel = useRef(0);
 
   useEffect(() => {
@@ -61,8 +74,9 @@ export default function PreviewStage({
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
+  // reset the auto-play guard whenever the source or assigned window changes
   useEffect(() => {
-    setTouchStarted(false);
+    autoPlayed.current = false;
   }, [project.videoUrl, project.slider.limitStart, project.slider.limitEnd, project.slider.limitEnabled]);
 
   // track stage size so a rotated video still covers the frame
@@ -80,12 +94,29 @@ export default function PreviewStage({
   const odd = rot === 90 || rot === 270;
   const rotScale = odd ? Math.max(box.w / box.h, box.h / box.w) : 1;
 
+  // responsive scale — design baseline 960×540
+  const stageScale = box.w && box.h
+    ? Math.max(Math.min(box.w / 960, box.h / 540), 0.4)
+    : 1;
+  const compactBar = (box.w / stageScale) < 640;
+
+  const finishScrub = () => {
+    if (!scrubSession.current) return;
+    scrubSession.current = false;
+    setScrubbing(false);
+    setScrubVal(null);
+    if (wasPlaying.current) {
+      wasPlaying.current = false;
+      void videoRef.current?.play().catch(() => {});
+    }
+  };
+
   const toggleFs = () => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void stageRef.current?.requestFullscreen?.();
   };
 
-  const { videoRef, time, duration, playing, loading, error } = player;
+  const { videoRef, time, duration, loading, error } = player;
   const slider = project.slider;
   const logo = project.logo;
   const activeButton = [
@@ -167,14 +198,88 @@ export default function PreviewStage({
     : Math.max(sMin, Math.min(sMax, time));
   const rFill = rMax > rMin ? ((rValue - rMin) / (rMax - rMin)) * 100 : 0;
 
-  const playAssignedWindow = () => {
-    setTouchStarted(true);
-    if (useScenes && activeScene) {
-      player.playSegment(activeScene.scene.start, activeScene.scene.end);
+  // Show a blinking "Tap to start" icon once the video is ready. Tapping it
+  // starts the assigned part — this also satisfies mobile autoplay policy.
+  // Always shown once ready (regardless of the autoPlay flag) so the
+  // experience can never be stuck paused with no way to start.
+  useEffect(() => {
+    if (player.error) {
+      autoPlayed.current = false;
+      setTapStart(false);
       return;
     }
-    // Touch-to-start uses the assigned scrub window; with no window it plays the full clip.
-    player.playSegment(sMin, lim ? sMax : duration || null);
+    if (player.loading) return;
+    if (autoPlayed.current) return;
+    const v = videoRef.current;
+    if (!v || !isFinite(v.duration) || v.duration <= 0) return;
+    autoPlayed.current = true;
+    setTapStart(true);
+  }, [player.loading, player.error, useScenes, spans.length, lim, sMin, sMax]);
+
+  const startFromTap = () => {
+    setTapStart(false);
+    if (useScenes && spans.length) {
+      player.playSegment(spans[0].scene.start, spans[0].scene.end);
+    } else {
+      player.playSegment(sMin, lim ? sMax : null);
+    }
+  };
+
+  // First interaction anywhere dismisses the tap overlay, but the tap is NEVER
+  // swallowed: if it lands on a control (cue, dropdown, scrubber, link...), the
+  // control handles it and plays its own scene; only empty-stage taps auto-play
+  // the assigned part. The overlay is pointer-events-none, so it never blocks.
+  useEffect(() => {
+    if (!tapStart) return;
+    const el = stageRef.current;
+    if (!el) return;
+    const dismiss = (e: PointerEvent) => {
+      setTapStart(false);
+      const t = e.target as HTMLElement | null;
+      const onControl = !!t?.closest(
+        'button,input,select,textarea,a,[role="button"]'
+      );
+      if (!onControl) startFromTap();
+    };
+    el.addEventListener("pointerdown", dismiss, true);
+    return () => el.removeEventListener("pointerdown", dismiss, true);
+  }, [tapStart]);
+
+  const activateCue = (cue: CueButton) => {
+    pendingCue.current = cue;
+    galleryShown.current = false;
+    setGallery(null);
+    // App owns the cue action (active state, toast, and playback). Keep the
+    // fallback for standalone use, but never issue the same play command twice.
+    if (onCue) onCue(cue.id);
+    else player.playSegment(cue.start, cue.end);
+  };
+
+  // when a cue with a gallery finishes its segment, show the gallery frame
+  useEffect(() => {
+    const cue = pendingCue.current;
+    if (!cue) return;
+    const imgs = (cue.gallery ?? []).filter((s) => s && s.trim());
+    if (!imgs.length || galleryShown.current) return;
+    const endedAt = cue.end != null ? cue.end : duration;
+    if (!player.playing && time >= endedAt - 0.05) {
+      galleryShown.current = true;
+      pendingCue.current = null;
+      setGallery({ cue, idx: 0 });
+    }
+  }, [time, player.playing, duration]);
+
+  // closing the gallery when playback restarts or the user scrubs away
+  useEffect(() => {
+    if (player.playing) setGallery(null);
+  }, [player.playing]);
+
+  const stepGallery = (dir: 1 | -1) => {
+    setGallery((g) => {
+      if (!g) return g;
+      const n = (g.cue.gallery ?? []).filter((s) => s && s.trim()).length;
+      return { cue: g.cue, idx: (g.idx + dir + n) % n };
+    });
   };
 
   return (
@@ -195,9 +300,8 @@ export default function PreviewStage({
         <video
           ref={videoRef}
           src={project.videoUrl}
-          className="h-full w-full object-cover"
+          className="pointer-events-none h-full w-full object-cover"
           playsInline
-          muted={player.muted}
         onLoadStart={player.handlers.onLoadStart}
         onLoadedMetadata={player.handlers.onLoadedMetadata}
         onPlaying={player.handlers.onPlaying}
@@ -212,6 +316,16 @@ export default function PreviewStage({
       {/* vignette */}
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_90%_at_50%_40%,transparent_55%,rgba(0,0,0,0.45)_100%)]" />
 
+      {/* ------- responsive scaled overlay ------- */}
+      <div
+        className="absolute top-0 left-0 z-10"
+        style={{
+          width: `${100 / stageScale}%`,
+          height: `${100 / stageScale}%`,
+          transform: `scale(${stageScale})`,
+          transformOrigin: "top left",
+        }}
+      >
       {/* ------- top HUD: logo + scrub slider ------- */}
       <div className="absolute inset-x-0 top-0 flex items-center gap-6 bg-gradient-to-b from-black/75 via-black/35 to-transparent px-5 pb-12 pt-4">
         {/* logo */}
@@ -265,22 +379,25 @@ export default function PreviewStage({
                   className="scrub w-full"
                   min={rMin}
                   max={rMax}
-                  step={1 / 30}
-                  value={rValue}
-                  style={{ ["--fill" as string]: `${rFill}%` }}
+                  step={1 / slider.fps}
+                  value={scrubbing && scrubVal != null ? scrubVal : rValue}
+                  style={{ ["--fill" as string]: `${scrubbing && scrubVal != null ? ((scrubVal - rMin) / Math.max(1e-6, rMax - rMin)) * 100 : rFill}%` }}
                   onPointerDown={() => {
                     const v = videoRef.current;
-                    wasPlaying.current = !!v && !v.paused;
+                    scrubSession.current = true;
+                    // Use React's playback state as well as the media element.
+                    // On mobile, paused can still be true while play() is pending.
+                    wasPlaying.current = player.playing || !!v && !v.paused;
                     v?.pause();
+                    setScrubbing(true);
+                    setScrubVal(rValue);
                   }}
-                  onPointerUp={() => {
-                    if (wasPlaying.current) {
-                      wasPlaying.current = false;
-                      videoRef.current?.play().catch(() => {});
-                    }
-                  }}
+                  onPointerUp={finishScrub}
+                  onPointerCancel={finishScrub}
+                  onLostPointerCapture={finishScrub}
                   onChange={(e) => {
                     const raw = Number(e.target.value);
+                    setScrubVal(raw);
                     player.seek(useScenes ? virtualToActual(raw) : raw);
                   }}
                   aria-label="Scrub frame by frame"
@@ -326,7 +443,7 @@ export default function PreviewStage({
                         borderColor: on ? s.scene.color : "rgba(255,255,255,0.14)",
                         color: on ? "#fff" : "rgba(255,255,255,0.62)",
                       }}
-                      className="truncate rounded-md border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.14em] transition-all hover:text-white"
+                      className={cn("truncate rounded-md border transition-all hover:text-white font-bold uppercase", compactBar ? "px-2 py-1 text-[9px] tracking-[0.12em]" : "px-2 py-1 text-[9px] tracking-[0.14em]")}
                       title={`${s.scene.label} · ${fmtTime(s.scene.start)}–${fmtTime(s.scene.end)}`}
                     >
                       {s.scene.label}
@@ -349,11 +466,11 @@ export default function PreviewStage({
       {/* ------- info cards ------- */}
       {visibleCards.map((c) => (
         <div
-          key={c.id + (showAllCards ? "-all" : "")}
-          className={cn(
-            "absolute top-1/2 z-10 w-60 -translate-y-1/2 sm:w-64",
-            c.side === "left" ? "left-5 anim-card-left" : "right-5 anim-card-right"
-          )}
+          key={c.id + (showAllCards ? "-all" : "")}            className={cn(
+              "absolute top-1/2 z-10 -translate-y-1/2",
+              compactBar ? "w-48" : "w-60 sm:w-64",
+              c.side === "left" ? "left-3 sm:left-5 anim-card-left" : "right-3 sm:right-5 anim-card-right"
+            )}
         >
           <div className="overflow-hidden rounded-md shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)] ring-1 ring-white/15">
             {c.image && (
@@ -394,7 +511,7 @@ export default function PreviewStage({
       {activeButton && (
         <div className="anim-fade-up pointer-events-none absolute inset-x-5 bottom-[92px] flex items-end justify-between">
           <div>
-            <h2 className="font-display text-3xl font-extrabold uppercase tracking-wide text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)] sm:text-4xl">
+            <h2 className={cn("font-display font-extrabold uppercase tracking-wide text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)]", compactBar ? "text-2xl" : "text-3xl sm:text-4xl")}>
               {activeButton.label} <span className="text-white/60">mode</span>
             </h2>
             <div className="mt-1.5 h-px w-full bg-gradient-to-r from-white/70 to-transparent" />
@@ -411,7 +528,7 @@ export default function PreviewStage({
         return (
           <div
             key={group.id}
-            className={cn("absolute bottom-[88px] z-30 w-56", sideClass)}
+            className={cn("absolute bottom-[88px] z-30", compactBar ? "w-44" : "w-56", sideClass)}
           >
             {open && (
               <div className="anim-fade-up mb-2 overflow-hidden rounded-2xl border border-white/20 bg-black/30 p-2 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.9)] backdrop-blur-2xl">
@@ -429,8 +546,7 @@ export default function PreviewStage({
                       <button
                         key={cue.id}
                         onClick={() => {
-                          onCue?.(cue.id);
-                          player.playSegment(cue.start, cue.end);
+                          activateCue(cue);
                           setOpenGroupId(null);
                         }}
                         className={cn(
@@ -457,7 +573,7 @@ export default function PreviewStage({
             <button
               onClick={() => setOpenGroupId(open ? null : group.id)}
               className={cn(
-                "flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.13em] text-white shadow-[0_12px_35px_-12px_rgba(0,0,0,0.8)] backdrop-blur-xl transition-all hover:bg-white/15",
+                "flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.13em] text-white shadow-[0_12px_35px_-12px_rgba(0,0,0,0.8)] backdrop-blur-xl transition-all hover:bg-white/15 pointer-events-auto",
                 open ? "bg-white/20" : "bg-black/35"
               )}
               style={{ borderColor: `${group.color}80` }}
@@ -474,9 +590,9 @@ export default function PreviewStage({
       })}
 
       {/* ------- bottom cue bar ------- */}
-      <div className="absolute inset-x-4 bottom-4 z-20">
-        <div className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-black/60 px-2.5 py-2 backdrop-blur-md">
-          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+      <div className={cn("absolute bottom-4 z-20 safe-b safe-l safe-r pointer-events-auto", compactBar ? "inset-x-2 bottom-2" : "inset-x-4")}>
+        <div className={cn("flex items-center gap-1.5 rounded-xl border border-white/10 bg-black/60 backdrop-blur-md", compactBar ? "gap-1 px-2 py-2" : "px-2.5 py-2")}>
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto flex-wrap">
             {project.buttons.length === 0 && (
               <span className="px-3 py-1.5 text-xs text-white/50">
                 No cue buttons yet — add some in the editor panel.
@@ -488,20 +604,18 @@ export default function PreviewStage({
               return (
                 <button
                   key={b.id}
-                  onClick={() => {
-                    onCue?.(b.id);
-                    player.playSegment(b.start, b.end);
-                  }}
+                  onClick={() => activateCue(b)}
                   className={cn(
-                    "group relative flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-[12px] font-bold uppercase tracking-[0.14em] transition-all duration-200",
+                    "group relative flex shrink-0 items-center gap-2 rounded-lg transition-all duration-200",
                     active
                       ? "bg-white/15 text-white"
-                      : "text-white/80 hover:bg-white/10 hover:text-white"
+                      : "text-white/80 hover:bg-white/10 hover:text-white",
+                    compactBar ? "flex-1 justify-center px-3 py-2.5 text-[12px] font-bold uppercase tracking-[0.12em]" : "px-3 py-2 text-[12px] font-bold uppercase tracking-[0.14em]"
                   )}
                   title={`Jump to ${fmtTime(b.start)}`}
                 >
                   <Icon
-                    className="h-4 w-4 transition-transform group-hover:scale-110"
+                    className={cn("transition-transform group-hover:scale-110", compactBar ? "h-4 w-4" : "h-4 w-4")}
                     style={{ color: active ? b.color : undefined }}
                     strokeWidth={2.2}
                   />
@@ -520,12 +634,22 @@ export default function PreviewStage({
 
           {/* utility cluster */}
           <div className="flex shrink-0 items-center gap-0.5 border-l border-white/10 pl-2">
-            <UtilityBtn
-              onClick={() => player.setMuted(!player.muted)}
-              label={player.muted ? "Unmute" : "Mute"}
-            >
-              {player.muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-            </UtilityBtn>
+            {present && onExport && (
+              <button
+                onClick={onExport}
+                disabled={exporting}
+                title="Export this interactive player as a standalone ZIP"
+                aria-label="Export interactive player as ZIP"
+                className="mr-1 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/85 transition-colors hover:bg-white/10 hover:text-amber disabled:cursor-wait disabled:opacity-60"
+              >
+                {exporting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {exporting ? "Packing" : "Export ZIP"}
+              </button>
+            )}
             <UtilityBtn
               onClick={() => setRot((r) => ((r + 90) % 360) as 0 | 90 | 180 | 270)}
               label={`Rotate screen (${rot}°)`}
@@ -563,11 +687,11 @@ export default function PreviewStage({
 
       {/* ------- link popups ------- */}
       {visibleLinks.map((l) => (
-        <button
-          key={l.id}
+        <button          key={l.id}
           onClick={() => window.open(l.url, "_blank", "noopener")}
           className={cn(
-            "anim-fade-up absolute z-20 flex items-center gap-2 rounded-full py-2 pl-3.5 pr-4 text-xs font-bold uppercase tracking-wider text-black shadow-[0_10px_30px_-8px_rgba(0,0,0,0.7)] transition-transform hover:scale-105 active:scale-95",
+              "anim-fade-up absolute z-20 flex items-center gap-2 rounded-full py-2 pl-3.5 pr-4 text-xs font-bold uppercase tracking-wider text-black shadow-[0_10px_30px_-8px_rgba(0,0,0,0.7)] transition-transform hover:scale-105 active:scale-95",
+              compactBar ? "text-[10px] py-1.5 pl-2.5 pr-3" : "",
             {
               "top-left": "left-5 top-20",
               "top-right": "right-5 top-20",
@@ -590,7 +714,7 @@ export default function PreviewStage({
 
       {/* ------- glass info panel ------- */}
       {infoOpen && (
-        <div className="anim-fade-up absolute bottom-20 right-4 z-30 w-80 max-w-[calc(100%-2rem)] overflow-hidden rounded-xl bg-white/10 shadow-[0_24px_70px_-20px_rgba(0,0,0,0.9)] ring-1 ring-white/25 backdrop-blur-xl">
+        <div className={cn("anim-fade-up absolute bottom-20 z-30 overflow-hidden rounded-xl bg-white/10 shadow-[0_24px_70px_-20px_rgba(0,0,0,0.9)] ring-1 ring-white/25 backdrop-blur-xl", compactBar ? "left-2 right-2 w-auto" : "right-4 w-80 max-w-[calc(100%-2rem)]")}>
           {project.info.image ? (
             <div className="relative h-36 w-full overflow-hidden">
               <img src={project.info.image} alt="" className="h-full w-full object-cover" />
@@ -623,25 +747,125 @@ export default function PreviewStage({
         </div>
       )}
 
-      {/* ------- touch-to-start assigned window ------- */}
-      {!touchStarted && !playing && !loading && !error && (
-        <button
-          onClick={playAssignedWindow}
-          className="anim-fade-up absolute left-1/2 top-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 rounded-2xl border border-white/25 bg-black/35 px-6 py-4 text-white shadow-[0_20px_60px_-18px_rgba(0,0,0,0.9)] backdrop-blur-xl transition-all duration-300 hover:scale-105 hover:border-amber/70 hover:bg-black/50"
-          aria-label="Touch to start assigned video part"
+      {/* ------- cue gallery overlay ------- */}
+      {gallery && (
+        <div
+          className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-[2px]"
+          onClick={() => setGallery(null)}
         >
-          <span className="grid h-12 w-12 place-items-center rounded-full bg-amber text-black shadow-[0_0_0_7px_rgba(255,178,36,0.14)]">
-            <Hand className="h-6 w-6" strokeWidth={2.2} />
+          <div
+            className={cn(
+              "anim-fade-up relative flex flex-col overflow-hidden rounded-2xl border border-white/20 bg-black/85 shadow-[0_30px_90px_-20px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-2xl",
+              compactBar ? "w-[min(78vw,300px)]" : "w-[min(82vw,420px)]"
+            )}
+            onClick={(e) => e.stopPropagation()}
+            onTouchStart={(e) => {
+              swipeStart.current = e.touches[0].clientX;
+            }}
+            onTouchEnd={(e) => {
+              if (swipeStart.current == null) return;
+              const dx = e.changedTouches[0].clientX - swipeStart.current;
+              swipeStart.current = null;
+              if (Math.abs(dx) < 40) return;
+              stepGallery(dx < 0 ? 1 : -1);
+            }}
+            role="dialog"
+            aria-label="Image gallery"
+          >
+            {/* header */}
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-2.5">
+              <span className="flex items-center gap-2 font-display text-sm font-bold uppercase tracking-wider text-white">
+                {gallery.cue.label}{" "}
+                <span className="text-white/50">gallery</span>
+              </span>
+              <button
+                onClick={() => setGallery(null)}
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/25 hover:text-white"
+                aria-label="Close gallery"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* image */}
+            <div className="relative overflow-hidden">
+              <img
+                key={gallery.idx}
+                src={(gallery.cue.gallery ?? []).filter((s) => s && s.trim())[gallery.idx]}
+                alt=""
+                draggable={false}
+                className={cn(
+                  "anim-fade-up w-full object-cover",
+                  compactBar ? "h-48" : "h-64 sm:h-72"
+                )}
+              />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-black/60 to-transparent" />
+              {((gallery.cue.gallery ?? []).filter((s) => s && s.trim()).length > 1) && (
+                <>
+                  <button
+                    onClick={() => stepGallery(-1)}
+                    className="absolute left-2.5 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white ring-1 ring-white/20 transition-all hover:scale-110 hover:bg-black/80"
+                    aria-label="Previous image"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={() => stepGallery(1)}
+                    className="absolute right-2.5 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white ring-1 ring-white/20 transition-all hover:scale-110 hover:bg-black/80"
+                    aria-label="Next image"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* dots + counter */}
+            <div className="flex items-center justify-center gap-2 border-t border-white/10 px-4 py-2.5">
+              {(gallery.cue.gallery ?? [])
+                .filter((s) => s && s.trim())
+                .map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setGallery({ cue: gallery.cue, idx: i })}
+                    className={cn(
+                      "h-1.5 rounded-full transition-all duration-300",
+                      i === gallery.idx ? "w-6 bg-amber" : "w-1.5 bg-white/30 hover:bg-white/60"
+                    )}
+                    aria-label={`Image ${i + 1}`}
+                  />
+                ))}
+              <span className="ml-2 font-mono text-[10px] text-white/50">
+                {gallery.idx + 1} / {(gallery.cue.gallery ?? []).filter((s) => s && s.trim()).length}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------- tap to start (ANY tap anywhere dismisses and plays) ------- */}
+      {tapStart && !loading && !error && (
+        <div
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') startFromTap(); }}
+          role="button"
+          tabIndex={0}
+          aria-label="Tap anywhere to start"
+          className="pointer-events-none absolute inset-0 z-30 grid place-items-center"
+        >
+          <span className="pointer-events-none flex flex-col items-center gap-3 rounded-3xl border border-white/15 bg-black/45 px-8 py-6 shadow-[0_24px_70px_-20px_rgba(0,0,0,0.9)] backdrop-blur-xl transition-transform">
+            <span className="grid h-16 w-16 animate-pulse place-items-center rounded-full border-[1.5px] border-amber bg-amber/15 text-amber shadow-[0_0_0_10px_rgba(255,178,36,0.08)]">
+              <Hand className="h-8 w-8" />
+            </span>
+            <span className="animate-pulse font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-white">
+              Tap to start
+            </span>
           </span>
-          <span className="font-display text-sm font-bold uppercase tracking-[0.16em]">
-            Touch to start
-          </span>
-        </button>
+        </div>
       )}
 
       {/* ------- loading ------- */}
       {loading && !error && (
-        <div className="absolute inset-0 z-30 grid place-items-center bg-black/55">
+        <div className="pointer-events-none absolute inset-0 z-30 grid place-items-center bg-black/55">
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="h-8 w-8 animate-spin text-amber" />
             <span className="font-mono text-xs uppercase tracking-[0.25em] text-white/70">
@@ -680,6 +904,7 @@ export default function PreviewStage({
           Editor preview
         </span>
       )}
+      </div>{/* end scaled overlay */}
     </div>
   );
 }
@@ -689,11 +914,13 @@ function UtilityBtn({
   onClick,
   label,
   active,
+  compact,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   label: string;
   active?: boolean;
+  compact?: boolean;
 }) {
   return (
     <button
@@ -701,7 +928,8 @@ function UtilityBtn({
       title={label}
       aria-label={label}
       className={cn(
-        "grid h-8 w-8 place-items-center rounded-lg transition-colors",
+        "grid place-items-center rounded-lg transition-colors",
+        compact ? "h-7 w-7" : "h-8 w-8",
         active ? "bg-amber text-black" : "text-white/80 hover:bg-white/10 hover:text-white"
       )}
     >

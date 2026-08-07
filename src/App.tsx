@@ -28,6 +28,68 @@ import { cn } from "./utils/cn";
 
 const STORAGE_KEY = "cuewalk-project-v1";
 
+/**
+ * Re-encode any embedded base64 image larger than ~90KB down to a compact
+ * JPEG (max 1000px, q0.72). Legacy images stored before upload-time
+ * compression was introduced are shrunk here, at export time, so the
+ * standalone HTML stays small.
+ */
+const MAX_IMAGE_B64 = 90 * 1024;
+const IMAGE_DATA_RE = /^data:image\/(jpeg|png|webp);base64,/;
+
+function shrinkDataImage(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        let w = img.naturalWidth || 1;
+        let h = img.naturalHeight || 1;
+        const maxDim = 1000;
+        if (w > maxDim || h > maxDim) {
+          const s = maxDim / Math.max(w, h);
+          w = Math.round(w * s);
+          h = Math.round(h * s);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return resolve(dataUrl);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.72));
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/** Deep-walk the project and shrink every oversized base64 image string. */
+async function optimizeProjectImages(project: Project): Promise<Project> {
+  const next = JSON.parse(JSON.stringify(project)) as Project;
+  const queue: unknown[] = [next];
+  while (queue.length) {
+    const node = queue.pop();
+    if (Array.isArray(node)) {
+      queue.push(...node);
+    } else if (node && typeof node === "object") {
+      for (const key of Object.keys(node as Record<string, unknown>)) {
+        const value = (node as Record<string, unknown>)[key];
+        if (typeof value === "string") {
+          if (value.length > MAX_IMAGE_B64 && IMAGE_DATA_RE.test(value)) {
+            (node as Record<string, unknown>)[key] = await shrinkDataImage(value);
+          }
+        } else if (value && typeof value === "object") {
+          queue.push(value);
+        }
+      }
+    }
+  }
+  return next;
+}
+
 function loadProject(): Project {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -100,7 +162,7 @@ any static host (Netlify, Vercel, GitHub Pages, S3, an intranet server).
 
 Controls
 --------
-Touch to start      Plays the assigned scene / scrub window once
+Auto start          Plays the first scene / assigned part when it loads
 Cue buttons         Jump to and play their assigned part
 Dropdown cues       Corner menus with sub-cues
 Scene chips         Sections of the top scroller (wheel or swipe to change)
@@ -127,7 +189,7 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null);
   const toastId = useRef(0);
 
-  const player = usePlayer();
+  const player = usePlayer(project.slider.fps);
 
   const setProject = useCallback(
     (fn: (p: Project) => Project) => setProjectState((prev) => fn(prev)),
@@ -162,7 +224,7 @@ export default function App() {
     if (b?.end != null && player.time >= b.end - 0.05) setActiveId(null);
   }, [player.time, activeId, project.buttons, project.cueGroups]);
 
-  // stop playback at the end of the assigned scrub window
+  // stop playback at the end of the assigned start-play section
   useEffect(() => {
     const s = project.slider;
     if (!s.limitEnabled || !player.playing) return;
@@ -235,12 +297,14 @@ export default function App() {
       const isDeviceVideo =
         project.videoUrl.startsWith("blob:") || project.videoUrl.startsWith("data:video");
       let videoMode: VideoMode = isDeviceVideo ? "bundled" : "linked";
+      let bundledVideoSize = 0;
 
       if (isDeviceVideo) {
         try {
           const res = await fetch(project.videoUrl);
           if (!res.ok) throw new Error(`video fetch failed: ${res.status}`);
           const blob = await res.blob();
+          bundledVideoSize = blob.size;
           const ext = videoExtension(project.videoUrl, blob.type);
           videoPath = `src/video.${ext}`;
           src?.file(`video.${ext}`, blob);
@@ -265,18 +329,27 @@ export default function App() {
 
       const exportedProject: Project = { ...project, videoUrl: videoPath };
 
-      src?.file("project.json", JSON.stringify(exportedProject, null, 2));
-      zip.file("index.html", makeStandaloneHtml(exportedProject, videoMode));
+      // Shrink legacy oversized base64 images before embedding them in the
+      // standalone HTML — this is what kept the ZIP at multiple MB.
+      const optimized = await optimizeProjectImages(exportedProject);
+
+      src?.file("project.json", JSON.stringify(optimized, null, 2));
+      zip.file("index.html", makeStandaloneHtml(optimized, videoMode));
       zip.file("README.txt", README);
 
       const blob = await zip.generateAsync({ type: "blob" });
+      const sizeMB = (blob.size / (1024 * 1024)).toFixed(1);
       downloadBlob(blob, `${slug(project.logo.text || "cuewalk-project")}.zip`);
+      const videoNote =
+        bundledVideoSize > 3 * 1024 * 1024
+          ? " (video file dominates — use a hosted URL for a smaller ZIP)"
+          : "";
       toast(
         videoMode === "bundled"
-          ? "ZIP exported with video file"
+          ? `ZIP exported — ${sizeMB} MB (video bundled)${videoNote}`
           : videoMode === "linked"
-            ? "ZIP exported with embedded video link"
-            : "ZIP exported without bundled video",
+            ? `ZIP exported — ${sizeMB} MB (embedded video link)`
+            : `ZIP exported — ${sizeMB} MB (no video)`,
         videoMode === "missing" ? "warn" : "ok"
       );
     } catch {
@@ -401,20 +474,6 @@ export default function App() {
           <div className="mx-1 h-6 w-px bg-line" />
 
           <button
-            onClick={exportZip}
-            disabled={exporting}
-            className={cn(
-              "flex items-center gap-2 rounded-lg border border-line2 bg-panel2 px-3 py-2 text-xs font-bold uppercase tracking-wider text-mut transition",
-              exporting
-                ? "cursor-wait opacity-60"
-                : "hover:border-amber/60 hover:text-amber"
-            )}
-          >
-            <Download className="h-4 w-4" />
-            {exporting ? "Packing…" : "Export ZIP"}
-          </button>
-
-          <button
             onClick={() => setPresent(true)}
             className="flex items-center gap-2 rounded-lg bg-amber px-3.5 py-2 text-xs font-bold uppercase tracking-wider text-black transition hover:brightness-110"
           >
@@ -509,6 +568,8 @@ export default function App() {
                 onToggleCards={() => setShowAllCards((s) => !s)}
                 onExitPresent={() => setPresent(false)}
                 onCue={onCueClick}
+                onExport={exportZip}
+                exporting={exporting}
               />
             </div>
           </div>

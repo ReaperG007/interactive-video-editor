@@ -198,3 +198,24 @@ body {
 .rec-dot {
   animation: pulse-ring 1.6s ease-out infinite;
 }
+
+/* ---------- responsive stage overlay ---------- */
+@layer utilities {
+  .safe-b { padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px); }
+  .safe-l { padding-left: max(env(safe-area-inset-left, 0px), 8px); }
+  .safe-r { padding-right: max(env(safe-area-inset-right, 0px), 8px); }
+}
+
+/* touch devices: disable hover transforms */
+@media (hover: none) {
+  .cue-btn:hover, .util-btn:hover, .link-pill:hover { transform: none; }
+}
+
+/* landscape phone */
+@media (max-height: 460px) and (orientation: landscape) {
+  .stage-overlay .top-hud { padding-bottom: 12px; }
+  .stage-overlay .card-img { height: 64px; }
+  .stage-overlay .mode-label { font-size: 22px; }
+  .stage-overlay .touch-overlay { padding: 12px 22px; gap: 8px; }
+  .stage-overlay .touch-overlay .finger { width: 42px; height: 42px; font-size: 21px; }
+}
