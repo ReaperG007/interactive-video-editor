@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import JSZip from "jszip";
 import { DEFAULT_PROJECT } from "../src/defaults.ts";
-import { makeStandaloneHtml } from "../src/export/standalone.ts";
+import { makeStandaloneHtml } from "../src/export/standaloneEnhanced.ts";
 
 // Same thresholds/helpers as src/App.tsx
 const MAX_IMAGE_B64 = 90 * 1024;

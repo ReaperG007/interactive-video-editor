@@ -32,6 +32,7 @@ const STYLES = `
   --safe-l:max(var(--gutter),env(safe-area-inset-left,0px));
   --safe-r:max(var(--gutter),env(safe-area-inset-right,0px));
   --tap:44px;
+  --group-slot:clamp(185px,21vw,255px);
 }
 *,*::before,*::after{box-sizing:border-box}
 html{height:100%;-webkit-text-size-adjust:100%;text-size-adjust:100%}
@@ -165,7 +166,7 @@ input[type=range]::-moz-range-thumb{width:clamp(8px,1.2vw,10px);height:clamp(18p
 .sdot{width:clamp(24px,3vw,28px);height:clamp(24px,3vw,28px);flex:none;border-radius:clamp(7px,1vw,9px);
   display:grid;place-items:center;font-size:clamp(12px,1.4vw,15px)}
 .slabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.stime{flex:none;font-size:clamp(8px,.9vw,9.5px);font-weight:700;color:var(--dim);font-variant-numeric:tabular-nums}
+
 .gtoggle{display:flex;align-items:center;gap:clamp(6px,.8vw,9px);width:100%;pointer-events:auto;
   padding:clamp(8px,1.2svh,11px) clamp(9px,1.2vw,13px);border-radius:clamp(11px,1.6vw,15px);
   border:1px solid var(--line2);background:rgba(10,13,18,.55);backdrop-filter:blur(20px);color:#fff;
@@ -206,9 +207,9 @@ input[type=range]::-moz-range-thumb{width:clamp(8px,1.2vw,10px);height:clamp(18p
 .close:hover{background:rgba(0,0,0,.7)}
 
 /* ---------- cue gallery ---------- */
-.gback{position:absolute;inset:0;z-index:80;display:grid;place-items:center;
+.gback{position:absolute;inset:0;z-index:80;display:grid;place-items:center;touch-action:pan-y;
   background:rgba(0,0,0,.72);backdrop-filter:blur(3px);animation:pop .28s ease both}
-.gframe{width:clamp(240px,34vw,430px);max-width:calc(100vw - var(--safe-l) - var(--safe-r));
+.gframe{width:clamp(240px,34vw,430px);max-width:calc(100vw - var(--safe-l) - var(--safe-r));touch-action:pan-y;
   display:flex;flex-direction:column;overflow:hidden;border-radius:clamp(14px,2.2vw,20px);
   border:1px solid var(--line2);background:rgba(6,8,12,.92);backdrop-filter:blur(28px) saturate(150%);
   box-shadow:0 34px 90px -24px rgba(0,0,0,.98)}
@@ -284,6 +285,7 @@ input[type=range]::-moz-range-thumb{width:clamp(8px,1.2vw,10px);height:clamp(18p
 @media(max-width:860px){
   .brand-tag{display:none}
   .mode .line{width:70%}
+  :root{--group-slot:clamp(165px,35vw,228px)}
   .group{width:clamp(160px,34vw,220px)}
   .link.bl,.link.br{bottom:calc(var(--bar) + var(--safe-b) + clamp(44px,6svh,60px))}
 }
@@ -347,6 +349,7 @@ input[type=range]::-moz-range-thumb{width:clamp(8px,1.2vw,10px);height:clamp(18p
   .info-body h3{font-size:clamp(11px,2.6vw,14px)}
   .info-body p{font-size:clamp(9px,2vw,11px)}
   .groups{bottom:calc(var(--bar) + var(--safe-b) + clamp(3px,.6svh,5px))}
+  :root{--group-slot:min(52vw,198px)}
   .group{width:min(50vw,190px)}
   .gtoggle{padding:clamp(5px,.8svh,7px) clamp(6px,1.3vw,9px);font-size:clamp(7px,1.8vw,9px);border-radius:clamp(6px,1.5vw,9px)}
   .gpanel{padding:clamp(3px,.5svh,5px);border-radius:clamp(8px,1.8vw,12px)}
@@ -372,6 +375,7 @@ input[type=range]::-moz-range-thumb{width:clamp(8px,1.2vw,10px);height:clamp(18p
   .subcue{padding:clamp(3px,.5svh,5px);font-size:clamp(7px,1.8vw,9px)}
   .sdot{width:clamp(16px,4vw,20px);height:clamp(16px,4vw,20px);font-size:clamp(8px,2vw,11px)}
   .ghead{font-size:clamp(7px,.8vw,9px)}
+  :root{--group-slot:min(42vw,148px)}
   .group{width:min(40vw,140px)}
   .link{padding:clamp(3px,.5svh,5px) clamp(5px,1vw,8px);font-size:clamp(6px,1.6vw,8px)}
   .card-img{width:clamp(44px,13vw,56px);min-height:clamp(34px,7svh,44px)}
@@ -398,6 +402,7 @@ input[type=range]::-moz-range-thumb{width:clamp(8px,1.2vw,10px);height:clamp(18p
   .ubtn{width:clamp(24px,5svh,30px);height:clamp(24px,5svh,30px);font-size:clamp(10px,2svh,14px)}
   .scene{min-width:clamp(32px,7vw,44px);font-size:clamp(6px,1.4svh,8px)}
   .groups{bottom:calc(var(--bar) + var(--safe-b) + 2px)}
+  :root{--group-slot:min(32vw,168px)}
   .group{width:min(30vw,160px)}
   .gtoggle{padding:clamp(3px,.5svh,5px) clamp(4px,.8vw,6px);font-size:clamp(6px,1.4svh,8px)}
   .subcue{padding:clamp(3px,.5svh,4px);font-size:clamp(7px,1.5svh,9px)}
@@ -428,7 +433,9 @@ var video=$('#video'),range=$('#range'),ticks=$('#ticks'),scenesEl=$('#scenes'),
     linksEl=$('#links'),cuesEl=$('#cues'),groupsEl=$('#groups'),modeEl=$('#mode'),
     infoEl=$('#infoPanel'),wrap=$('#videoWrap'),clockEl=$('#clock'),stage=$('#stage'),loader=$('#loader'),
     utilEl=$('#util'),tapStart=$('#tapStart'),tapRing=$('#tapRing');
-var duration=0,segEnd=null,activeId=null,openGroup=null,infoOpen=false,rot=0,wasPlaying=false,playIntent=false,
+var duration=0,segEnd=null,activeId=null,openGroup=null,infoOpen=false,
+    rot=(PROJECT.display&&[0,90,180,270].indexOf(Number(PROJECT.display.rotation))>=0?Number(PROJECT.display.rotation):0),
+    wasPlaying=false,playIntent=false,
     sceneIdx=0,lastWheel=0,swipeX=null,lastHtml={},lastCueId=null,galleryId=null,gIdx=0,gSwipe=null,tapDismissed=false,scrubbing=false,
     frameRate=([30,40,50,60].indexOf(Number(PROJECT.slider&&PROJECT.slider.fps))>=0?Number(PROJECT.slider.fps):30);
 

@@ -14,14 +14,18 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import type {
-  CueButton,
-  CueGroup,
-  FrameRate,
-  InfoCard,
-  LinkCard,
-  Project,
-  SliderScene,
+import {
+  ASPECT_RATIO_LABELS,
+  ROTATION_OPTIONS,
+  type AspectRatioPreset,
+  type CueButton,
+  type CueGroup,
+  type FrameRate,
+  type InfoCard,
+  type LinkCard,
+  type Project,
+  type Rotation,
+  type SliderScene,
 } from "../types";
 import { PALETTE, uid } from "../types";
 import type { Player } from "../hooks/usePlayer";
@@ -334,6 +338,9 @@ function VideoTab({
     project.videoUrl.startsWith("blob:") ? "device video" : null
   );
   const isLocal = project.videoUrl.startsWith("blob:");
+  const display = project.display;
+  const setDisplay = (patch: Partial<Project["display"]>) =>
+    setProject((p) => ({ ...p, display: { ...p.display, ...patch } }));
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -424,6 +431,46 @@ function VideoTab({
               {project.videoUrl === s.url && <span className="text-[10px]">active</span>}
             </button>
           ))}
+        </div>
+      </div>
+      <div className="border-t border-line pt-4">
+        <SectionHead icon={PanelsTopLeft} title="Output frame" />
+        <p className="mt-2 text-[11px] leading-relaxed text-dim">
+          Choose the free output canvas size. Original follows the video's own
+          dimensions; turning the player rotates the video and every interactive panel together.
+        </p>
+        <div className="mt-3">
+          <Label>Aspect ratio</Label>
+          <select
+            value={display.aspectRatio}
+            onChange={(e) => setDisplay({ aspectRatio: e.target.value as AspectRatioPreset })}
+            className={cn(inputCls, "font-mono text-xs")}
+            aria-label="Output aspect ratio"
+          >
+            {(Object.keys(ASPECT_RATIO_LABELS) as AspectRatioPreset[]).map((ratio) => (
+              <option key={ratio} value={ratio}>
+                {ASPECT_RATIO_LABELS[ratio]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mt-3">
+          <Label>Rotate entire player</Label>
+          <select
+            value={display.rotation}
+            onChange={(e) => setDisplay({ rotation: Number(e.target.value) as Rotation })}
+            className={cn(inputCls, "font-mono text-xs")}
+            aria-label="Rotate entire player"
+          >
+            {ROTATION_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-[10px] leading-relaxed text-dim">
+            Rotation is saved in the project and carried into the standalone ZIP export.
+          </p>
         </div>
       </div>
       <p className="rounded-md border border-line bg-panel2/60 p-2.5 text-[11px] leading-relaxed text-dim">

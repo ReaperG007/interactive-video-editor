@@ -22,7 +22,7 @@ import { usePlayer } from "./hooks/usePlayer";
 import PreviewStage from "./components/PreviewStage";
 import Sidebar from "./components/Sidebar";
 import Timeline from "./components/Timeline";
-import { makeStandaloneHtml, type VideoMode } from "./export/standalone";
+import { makeStandaloneHtml, type VideoMode } from "./export/standaloneEnhanced";
 import { fmtTime } from "./utils/time";
 import { cn } from "./utils/cn";
 
@@ -102,6 +102,7 @@ function loadProject(): Project {
         return {
           ...DEFAULT_PROJECT,
           ...p,
+          display: { ...DEFAULT_PROJECT.display, ...p.display },
           logo: { ...DEFAULT_PROJECT.logo, ...p.logo },
           slider: { ...DEFAULT_PROJECT.slider, ...p.slider },
           info: { ...DEFAULT_PROJECT.info, ...p.info },
@@ -369,6 +370,7 @@ export default function App() {
         setProjectState({
           ...DEFAULT_PROJECT,
           ...p,
+          display: { ...DEFAULT_PROJECT.display, ...p.display },
           logo: { ...DEFAULT_PROJECT.logo, ...p.logo },
           slider: { ...DEFAULT_PROJECT.slider, ...p.slider },
           info: { ...DEFAULT_PROJECT.info, ...p.info },
@@ -561,6 +563,7 @@ export default function App() {
             <div className={cn(chromeHidden ? "h-full w-full" : "w-full max-w-[1060px]")}>
               <PreviewStage
                 project={project}
+                setProject={setProject}
                 player={player}
                 present={present}
                 activeId={activeId}

@@ -1,4 +1,4 @@
-import type { Project } from "./types";
+import { DEFAULT_DISPLAY, type Project } from "./types";
 
 export const SAMPLE_VIDEOS = [
   {
@@ -13,6 +13,7 @@ export const SAMPLE_VIDEOS = [
 
 export const DEFAULT_PROJECT: Project = {
   videoUrl: SAMPLE_VIDEOS[0].url,
+  display: DEFAULT_DISPLAY,
   logo: {
     mode: "text",
     text: "Propwalk",
