@@ -46,6 +46,12 @@ interface Props {
   exporting?: boolean;
 }
 
+// Anything that already owns its own tap action. Pressing one of these may only
+// dismiss the start overlay - it must never auto-play the assigned part on top
+// of the control the visitor actually pressed.
+const TAP_CONTROL_SELECTOR =
+  'button,input,select,textarea,a,[role="button"],[data-cue],[data-sub],[data-card],[data-group],[data-scene],[data-gclose],[data-gprev],[data-gnext],[data-gdot]';
+
 export default function PreviewStage({
   project,
   setProject,
@@ -62,6 +68,7 @@ export default function PreviewStage({
   const stageRef = useRef<HTMLDivElement>(null);
   const wasPlaying = useRef(false);
   const autoPlayed = useRef(false);
+  const tapStarted = useRef(false);
   const [tapStart, setTapStart] = useState(false);
   const [fs, setFs] = useState(false);
   const [rot, setRot] = useState<Rotation>(project.display.rotation);
@@ -96,6 +103,7 @@ export default function PreviewStage({
   // reset the auto-play guard whenever the source or assigned window changes
   useEffect(() => {
     autoPlayed.current = false;
+    tapStarted.current = false;
   }, [project.videoUrl, project.slider.limitStart, project.slider.limitEnd, project.slider.limitEnabled]);
 
   // track stage size so a rotated video still covers the frame
@@ -245,6 +253,7 @@ export default function PreviewStage({
   useEffect(() => {
     if (player.error) {
       autoPlayed.current = false;
+      tapStarted.current = false;
       setTapStart(false);
       return;
     }
@@ -253,10 +262,16 @@ export default function PreviewStage({
     const v = videoRef.current;
     if (!v || !isFinite(v.duration) || v.duration <= 0) return;
     autoPlayed.current = true;
+    tapStarted.current = false;
     setTapStart(true);
   }, [player.loading, player.error, useScenes, spans.length, lim, sMin, sMax]);
 
+  // The overlay starts the assigned part exactly once. Every later tap only gets
+  // the overlay out of the way, so the control that was pressed runs its own
+  // action instead of the assigned part playing on top of it.
   const startFromTap = () => {
+    if (tapStarted.current) return;
+    tapStarted.current = true;
     setTapStart(false);
     if (useScenes && spans.length) {
       player.playSegment(spans[0].scene.start, spans[0].scene.end);
@@ -265,24 +280,46 @@ export default function PreviewStage({
     }
   };
 
+  const dismissTapOverlay = (target: EventTarget | null) => {
+    setTapStart(false);
+    const t = target as HTMLElement | null;
+    // A control owns its tap: dismiss the overlay, but never auto-play.
+    if (t && typeof t.closest === "function" && t.closest(TAP_CONTROL_SELECTOR)) {
+      tapStarted.current = true;
+      return;
+    }
+    startFromTap();
+  };
+
   // First interaction anywhere dismisses the tap overlay, but the tap is NEVER
-  // swallowed: if it lands on a control (cue, dropdown, scrubber, link...), the
+  // swallowed: if it lands on a control (cue, dropdown, scrubber, link...), that
   // control handles it and plays its own scene; only empty-stage taps auto-play
   // the assigned part. The overlay is pointer-events-none, so it never blocks.
   useEffect(() => {
     if (!tapStart) return;
     const el = stageRef.current;
     if (!el) return;
-    const dismiss = (e: PointerEvent) => {
-      setTapStart(false);
-      const t = e.target as HTMLElement | null;
-      const onControl = !!t?.closest(
-        'button,input,select,textarea,a,[role="button"]'
-      );
-      if (!onControl) startFromTap();
-    };
+    const dismiss = (e: Event) => dismissTapOverlay(e.target);
     el.addEventListener("pointerdown", dismiss, true);
-    return () => el.removeEventListener("pointerdown", dismiss, true);
+    // touch browsers that never surface pointerdown to the capture listener
+    el.addEventListener("touchstart", dismiss, { capture: true, passive: true });
+    return () => {
+      el.removeEventListener("pointerdown", dismiss, true);
+      el.removeEventListener("touchstart", dismiss, true);
+    };
+  }, [tapStart]);
+
+  // Keyboard play controls belong to the player: never leave the overlay
+  // covering the screen while Space / arrows drive playback.
+  useEffect(() => {
+    if (!tapStart) return;
+    const onKey = () => {
+      if (tapStarted.current) return;
+      tapStarted.current = true;
+      setTapStart(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [tapStart]);
 
   const activateCue = (cue: CueButton) => {
@@ -928,7 +965,7 @@ export default function PreviewStage({
       {/* ------- tap to start (ANY tap anywhere dismisses and plays) ------- */}
       {tapStart && !loading && !error && (
         <div
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') startFromTap(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') startFromTap(); }}
           role="button"
           tabIndex={0}
           aria-label="Tap anywhere to start"

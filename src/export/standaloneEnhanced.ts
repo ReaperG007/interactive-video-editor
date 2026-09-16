@@ -55,6 +55,73 @@ wrap.style.pointerEvents='auto';
     "galleryEl.addEventListener('pointerdown',function(e){if(!e.isPrimary)return;gSwipe={x:e.clientX,y:e.clientY,id:e.pointerId};if(galleryEl.setPointerCapture)galleryEl.setPointerCapture(e.pointerId)},{passive:true});\ngalleryEl.addEventListener('pointerup',function(e){if(!gSwipe||gSwipe.id!==e.pointerId)return;var dx=e.clientX-gSwipe.x,dy=e.clientY-gSwipe.y;gSwipe=null;if(galleryId&&Math.abs(dx)>40&&Math.abs(dx)>Math.abs(dy))gstep(dx<0?1:-1)});\ngalleryEl.addEventListener('pointercancel',function(){gSwipe=null});\ngalleryEl.addEventListener('click'"
   );
 
+  // ---- tap to start -------------------------------------------------------
+  // The overlay used to start the assigned part from several listeners at once
+  // (stage pointerdown/touchstart, a stage click, the pill and the document
+  // click delegation), so pressing the pill or any other button could fire two
+  // play/seek commands and the timeline restarted on top of the control that was
+  // actually pressed. Everything now funnels through one guarded start, and a
+  // tap on any other control only dismisses the overlay.
+  const oldTap = `// First interaction anywhere dismisses the tap overlay, but the tap is NEVER
+// swallowed: if it lands on a control (cue, dropdown, scrubber, link...), that
+// control handles it and plays its own scene; only empty-stage taps auto-play.
+function dismissTap(e){
+  if(!(tapStart&&tapStart.style.display!=='none'&&!tapDismissed))return;
+  tapDismissed=true;tapStart.style.display='none';
+  if(!(e.target&&e.target.closest&&e.target.closest('button,input,select,textarea,a,[role="button"],[data-cue],[data-sub],[data-card],[data-group],[data-scene],[data-gclose],[data-gprev],[data-gnext],[data-gdot]')))startAssigned();
+}
+stage.addEventListener('pointerdown',dismissTap,true);
+stage.addEventListener('touchstart',function(e){ dismissTap(e); },{capture:true,passive:true});
+stage.addEventListener('click',function(e){
+  if(tapStart&&tapStart.style.display!=='none'&&!tapDismissed){
+    if(e.target.closest&&e.target.closest('#tapStart')){ tapDismissed=true; tapStart.style.display='none'; startAssigned(); return; }
+  }
+},true);
+// Direct pill handler ensures the visible button always starts, even if document delegation is blocked
+if(tapStart){
+  tapStart.addEventListener('pointerdown',function(e){
+    if(!tapDismissed){ e.stopPropagation(); tapDismissed=true; tapStart.style.display='none'; startAssigned(); }
+  },true);
+  tapStart.addEventListener('click',function(e){
+    if(e.target.closest&&e.target.closest('#tapPill')){ if(!tapDismissed){ tapDismissed=true; tapStart.style.display='none'; startAssigned(); } }
+  });
+}`;
+  const newTap = `// ---- tap to start -------------------------------------------------------
+// One tap on the overlay starts the assigned part exactly once. A tap that
+// lands on any other control (cue, chip, dropdown, card, link, util button,
+// scrubber, gallery) only dismisses the overlay so that control runs its own
+// action - the start overlay must never replay the timeline on top of it.
+var TAP_CTRL='button,input,select,textarea,a,[role="button"],[data-cue],[data-sub],[data-card],[data-group],[data-scene],[data-gclose],[data-gprev],[data-gnext],[data-gdot],.tap-pill,#tapPill';
+function tapOpen(){return !!(tapStart&&!tapDismissed&&tapStart.style.display!=='none')}
+function hideTap(){tapDismissed=true;if(tapStart)tapStart.style.display='none'}
+function startFromTap(){if(tapDismissed)return;hideTap();startAssigned()}
+function dismissTap(e){
+  if(!tapOpen())return;
+  var t=e&&e.target;
+  if(t&&t.closest&&t.closest('#tapPill')){startFromTap();return}
+  if(t&&t.closest&&t.closest(TAP_CTRL)){hideTap();return}
+  startFromTap();
+}
+stage.addEventListener('pointerdown',dismissTap,true);
+stage.addEventListener('touchstart',dismissTap,{capture:true,passive:true});
+if(tapStart){
+  tapStart.addEventListener('pointerdown',function(){startFromTap()},true);
+  tapStart.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('#tapPill'))startFromTap()});
+}`;
+  runtime = runtime.replace(oldTap, newTap);
+
+  runtime = runtime.replace(
+    "  if(e.target.closest('#tapStart')||e.target.closest('#tapPill')){tapDismissed=true;tapStart.style.display='none';startAssigned()}",
+    "  if(e.target.closest('#tapStart')||e.target.closest('#tapPill')){startFromTap()}"
+  );
+
+  // Keyboard shortcuts are player controls too: pressing Space or an arrow must
+  // dismiss the overlay instead of leaving it stuck on top of playback.
+  runtime = runtime.replace(
+    "addEventListener('keydown',function(e){\n  var k=e.key.toLowerCase();\n  if(e.code==='Space'){e.preventDefault();",
+    "addEventListener('keydown',function(e){\n  var k=e.key.toLowerCase();\n  if(tapOpen())hideTap();\n  if(e.code==='Space'){e.preventDefault();"
+  );
+
   const oldRotation = `function applyRotation(){var odd=rot===90||rot===270;
   var sc=odd?Math.max(innerWidth/innerHeight,innerHeight/innerWidth):1;
   wrap.style.transform='rotate('+rot+'deg) scale('+sc+')'}`;

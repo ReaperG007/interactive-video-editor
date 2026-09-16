@@ -621,13 +621,14 @@ function resetAll(){var sp=spans(),l=limits();
 renderBrand();renderUtil();applyRotation();
 
 
-video.addEventListener('loadedmetadata',function(){duration=video.duration||0;render();
-  // Always show the tap-to-start overlay once the video is ready, regardless of
-  // the autoPlay flag, so the experience can never be stuck paused with no way
-  // to start. One tap anywhere dismisses it and plays the assigned part.
-  if(tapStart&&!tapDismissed){tapRing.innerHTML=icon('tap');tapStart.style.display='flex'}});
-video.addEventListener('loadeddata',function(){loader.classList.add('hide')});
-video.addEventListener('error',function(){loader.textContent='Video could not load';loader.classList.remove('hide')});
+function showTap(){ if(tapStart&&!tapDismissed){ tapRing.innerHTML=icon('tap'); tapStart.style.display='flex'; } }
+video.addEventListener('loadedmetadata',function(){duration=video.duration||0;render(); showTap();});
+video.addEventListener('loadeddata',function(){loader.classList.add('hide'); showTap();});
+video.addEventListener('canplay',showTap);
+video.addEventListener('canplaythrough',showTap);
+if(video.readyState>=1){ showTap(); } else { setTimeout(showTap,900); setTimeout(showTap,1800); }
+video.addEventListener('error',function(){loader.textContent='Video could not load';loader.classList.remove('hide'); showTap();});
+// loadeddata/error handled above with showTap
 video.addEventListener('ended',function(){showGallery(lastCueId);segEnd=null});
 
 range.addEventListener('pointerdown',function(){wasPlaying=!video.paused;video.pause();scrubbing=true});
@@ -671,7 +672,7 @@ document.addEventListener('click',function(e){
   var card=e.target.closest('[data-card]');
   if(card){var cc=(PROJECT.cards||[]).filter(function(x){return x.id===card.dataset.card})[0];
     if(cc){lastCueId=null;galleryId=null;playSegment(cc.start,cc.end)}}
-  if(e.target.closest('#tapStart')){tapDismissed=true;tapStart.style.display='none';startAssigned()}
+  if(e.target.closest('#tapStart')||e.target.closest('#tapPill')){tapDismissed=true;tapStart.style.display='none';startAssigned()}
   if(e.target.closest('#info')){infoOpen=!infoOpen;renderUtil();render()}
   if(e.target.closest('[data-close-info]')){infoOpen=false;renderUtil();render()}
   if(e.target.closest('#rotate')){rot=(rot+90)%360;applyRotation()}
@@ -689,11 +690,27 @@ document.addEventListener('click',function(e){
 // First interaction anywhere dismisses the tap overlay, but the tap is NEVER
 // swallowed: if it lands on a control (cue, dropdown, scrubber, link...), that
 // control handles it and plays its own scene; only empty-stage taps auto-play.
-stage.addEventListener('pointerdown',function(e){
+function dismissTap(e){
   if(!(tapStart&&tapStart.style.display!=='none'&&!tapDismissed))return;
   tapDismissed=true;tapStart.style.display='none';
-  if(!(e.target&&e.target.closest&&e.target.closest('button,input,select,textarea,a,[role="button"]')))startAssigned();
+  if(!(e.target&&e.target.closest&&e.target.closest('button,input,select,textarea,a,[role="button"],[data-cue],[data-sub],[data-card],[data-group],[data-scene],[data-gclose],[data-gprev],[data-gnext],[data-gdot]')))startAssigned();
+}
+stage.addEventListener('pointerdown',dismissTap,true);
+stage.addEventListener('touchstart',function(e){ dismissTap(e); },{capture:true,passive:true});
+stage.addEventListener('click',function(e){
+  if(tapStart&&tapStart.style.display!=='none'&&!tapDismissed){
+    if(e.target.closest&&e.target.closest('#tapStart')){ tapDismissed=true; tapStart.style.display='none'; startAssigned(); return; }
+  }
 },true);
+// Direct pill handler ensures the visible button always starts, even if document delegation is blocked
+if(tapStart){
+  tapStart.addEventListener('pointerdown',function(e){
+    if(!tapDismissed){ e.stopPropagation(); tapDismissed=true; tapStart.style.display='none'; startAssigned(); }
+  },true);
+  tapStart.addEventListener('click',function(e){
+    if(e.target.closest&&e.target.closest('#tapPill')){ if(!tapDismissed){ tapDismissed=true; tapStart.style.display='none'; startAssigned(); } }
+  });
+}
 
 document.addEventListener('fullscreenchange',renderUtil);
 // resize/orientation handled by device detection above
