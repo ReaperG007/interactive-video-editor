@@ -18,7 +18,15 @@ import {
   Sun,
   X,
 } from "lucide-react";
-import type { CueButton, Project } from "../types";
+import {
+  ASPECT_RATIO_VALUES,
+  aspectRatioValue,
+  isQuarterTurn,
+  swapAspectRatio,
+  type CueButton,
+  type Project,
+  type Rotation,
+} from "../types";
 import type { Player } from "../hooks/usePlayer";
 import { ICONS } from "../icons";
 import { fmtClock, fmtTime } from "../utils/time";
@@ -26,6 +34,7 @@ import { cn } from "../utils/cn";
 
 interface Props {
   project: Project;
+  setProject: (fn: (p: Project) => Project) => void;
   player: Player;
   present: boolean;
   activeId: string | null;
@@ -37,8 +46,15 @@ interface Props {
   exporting?: boolean;
 }
 
+// Anything that already owns its own tap action. Pressing one of these may only
+// dismiss the start overlay - it must never auto-play the assigned part on top
+// of the control the visitor actually pressed.
+const TAP_CONTROL_SELECTOR =
+  'button,input,select,textarea,a,[role="button"],[data-cue],[data-sub],[data-card],[data-group],[data-scene],[data-gclose],[data-gprev],[data-gnext],[data-gdot]';
+
 export default function PreviewStage({
   project,
+  setProject,
   player,
   present,
   activeId,
@@ -52,10 +68,20 @@ export default function PreviewStage({
   const stageRef = useRef<HTMLDivElement>(null);
   const wasPlaying = useRef(false);
   const autoPlayed = useRef(false);
+  const tapStarted = useRef(false);
   const [tapStart, setTapStart] = useState(false);
   const [fs, setFs] = useState(false);
-  const [rot, setRot] = useState<0 | 90 | 180 | 270>(0);
+  const [rot, setRot] = useState<Rotation>(project.display.rotation);
+  const [sourceAspect, setSourceAspect] = useState(ASPECT_RATIO_VALUES["16:9"]);
   const [box, setBox] = useState({ w: 16, h: 9 });
+
+  useEffect(() => {
+    setRot(project.display.rotation);
+  }, [project.display.rotation]);
+
+  useEffect(() => {
+    setSourceAspect(ASPECT_RATIO_VALUES["16:9"]);
+  }, [project.videoUrl]);
   const [infoOpen, setInfoOpen] = useState(false);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   const [sceneIdx, setSceneIdx] = useState(0);
@@ -65,7 +91,7 @@ export default function PreviewStage({
   const [gallery, setGallery] = useState<{ cue: CueButton; idx: number } | null>(null);
   const pendingCue = useRef<CueButton | null>(null);
   const galleryShown = useRef(false);
-  const swipeStart = useRef<number | null>(null);
+  const swipeStart = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const lastWheel = useRef(0);
 
   useEffect(() => {
@@ -77,6 +103,7 @@ export default function PreviewStage({
   // reset the auto-play guard whenever the source or assigned window changes
   useEffect(() => {
     autoPlayed.current = false;
+    tapStarted.current = false;
   }, [project.videoUrl, project.slider.limitStart, project.slider.limitEnd, project.slider.limitEnabled]);
 
   // track stage size so a rotated video still covers the frame
@@ -91,14 +118,35 @@ export default function PreviewStage({
     return () => ro.disconnect();
   }, []);
 
-  const odd = rot === 90 || rot === 270;
-  const rotScale = odd ? Math.max(box.w / box.h, box.h / box.w) : 1;
+  const baseAspect = aspectRatioValue(project.display.aspectRatio, sourceAspect);
+  const outputAspect = isQuarterTurn(rot) ? swapAspectRatio(baseAspect) : baseAspect;
+  const odd = isQuarterTurn(rot);
+  // A quarter turn swaps the screen's unrotated width and height. Keeping
+  // those bounds explicit lets the rotated screen fit exactly instead of
+  // scaling it past the stage and clipping every interactive layer.
+  const screenBox = odd
+    ? { w: box.h, h: box.w }
+    : box;
+  const rotatableScreenStyle = odd
+    ? {
+        width: `${screenBox.w}px`,
+        height: `${screenBox.h}px`,
+        left: `${(box.w - screenBox.w) / 2}px`,
+        top: `${(box.h - screenBox.h) / 2}px`,
+        transform: `rotate(${rot}deg)`,
+        transformOrigin: "center center",
+      }
+    : {
+        inset: 0,
+        transform: `rotate(${rot}deg)`,
+        transformOrigin: "center center",
+      };
 
   // responsive scale — design baseline 960×540
-  const stageScale = box.w && box.h
-    ? Math.max(Math.min(box.w / 960, box.h / 540), 0.4)
+  const stageScale = screenBox.w && screenBox.h
+    ? Math.max(Math.min(screenBox.w / 960, screenBox.h / 540), 0.4)
     : 1;
-  const compactBar = (box.w / stageScale) < 640;
+  const compactBar = (screenBox.w / stageScale) < 640;
 
   const finishScrub = () => {
     if (!scrubSession.current) return;
@@ -205,6 +253,7 @@ export default function PreviewStage({
   useEffect(() => {
     if (player.error) {
       autoPlayed.current = false;
+      tapStarted.current = false;
       setTapStart(false);
       return;
     }
@@ -213,10 +262,16 @@ export default function PreviewStage({
     const v = videoRef.current;
     if (!v || !isFinite(v.duration) || v.duration <= 0) return;
     autoPlayed.current = true;
+    tapStarted.current = false;
     setTapStart(true);
   }, [player.loading, player.error, useScenes, spans.length, lim, sMin, sMax]);
 
+  // The overlay starts the assigned part exactly once. Every later tap only gets
+  // the overlay out of the way, so the control that was pressed runs its own
+  // action instead of the assigned part playing on top of it.
   const startFromTap = () => {
+    if (tapStarted.current) return;
+    tapStarted.current = true;
     setTapStart(false);
     if (useScenes && spans.length) {
       player.playSegment(spans[0].scene.start, spans[0].scene.end);
@@ -225,24 +280,46 @@ export default function PreviewStage({
     }
   };
 
+  const dismissTapOverlay = (target: EventTarget | null) => {
+    setTapStart(false);
+    const t = target as HTMLElement | null;
+    // A control owns its tap: dismiss the overlay, but never auto-play.
+    if (t && typeof t.closest === "function" && t.closest(TAP_CONTROL_SELECTOR)) {
+      tapStarted.current = true;
+      return;
+    }
+    startFromTap();
+  };
+
   // First interaction anywhere dismisses the tap overlay, but the tap is NEVER
-  // swallowed: if it lands on a control (cue, dropdown, scrubber, link...), the
+  // swallowed: if it lands on a control (cue, dropdown, scrubber, link...), that
   // control handles it and plays its own scene; only empty-stage taps auto-play
   // the assigned part. The overlay is pointer-events-none, so it never blocks.
   useEffect(() => {
     if (!tapStart) return;
     const el = stageRef.current;
     if (!el) return;
-    const dismiss = (e: PointerEvent) => {
-      setTapStart(false);
-      const t = e.target as HTMLElement | null;
-      const onControl = !!t?.closest(
-        'button,input,select,textarea,a,[role="button"]'
-      );
-      if (!onControl) startFromTap();
-    };
+    const dismiss = (e: Event) => dismissTapOverlay(e.target);
     el.addEventListener("pointerdown", dismiss, true);
-    return () => el.removeEventListener("pointerdown", dismiss, true);
+    // touch browsers that never surface pointerdown to the capture listener
+    el.addEventListener("touchstart", dismiss, { capture: true, passive: true });
+    return () => {
+      el.removeEventListener("pointerdown", dismiss, true);
+      el.removeEventListener("touchstart", dismiss, true);
+    };
+  }, [tapStart]);
+
+  // Keyboard play controls belong to the player: never leave the overlay
+  // covering the screen while Space / arrows drive playback.
+  useEffect(() => {
+    if (!tapStart) return;
+    const onKey = () => {
+      if (tapStarted.current) return;
+      tapStarted.current = true;
+      setTapStart(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [tapStart]);
 
   const activateCue = (cue: CueButton) => {
@@ -289,21 +366,30 @@ export default function PreviewStage({
         "group/stage relative w-full overflow-hidden bg-black select-none",
         present
           ? "h-full rounded-none"
-          : "aspect-video rounded-xl ring-1 ring-line shadow-[0_24px_80px_-24px_rgba(0,0,0,0.9)]"
+          : "rounded-xl ring-1 ring-line shadow-[0_24px_80px_-24px_rgba(0,0,0,0.9)]"
       )}
+      style={!present ? { aspectRatio: outputAspect } : undefined}
     >
-      {/* ------- video (rotatable screen) ------- */}
+      {/* ------- rotatable interactive screen (video + every panel) ------- */}
       <div
         className="absolute inset-0 transition-transform duration-700 ease-[cubic-bezier(.3,.8,.3,1)]"
-        style={{ transform: `rotate(${rot}deg) scale(${rotScale})` }}
+        style={rotatableScreenStyle}
       >
+      {/* ------- video ------- */}
+      <div className="absolute inset-0">
         <video
           ref={videoRef}
           src={project.videoUrl}
           className="pointer-events-none h-full w-full object-cover"
           playsInline
         onLoadStart={player.handlers.onLoadStart}
-        onLoadedMetadata={player.handlers.onLoadedMetadata}
+        onLoadedMetadata={() => {
+          player.handlers.onLoadedMetadata();
+          const v = videoRef.current;
+          if (v?.videoWidth && v.videoHeight) {
+            setSourceAspect(`${v.videoWidth} / ${v.videoHeight}`);
+          }
+        }}
         onPlaying={player.handlers.onPlaying}
         onPause={player.handlers.onPause}
         onWaiting={player.handlers.onWaiting}
@@ -312,6 +398,7 @@ export default function PreviewStage({
         onEnded={player.handlers.onEnded}
         />
       </div>
+
 
       {/* vignette */}
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_90%_at_50%_40%,transparent_55%,rgba(0,0,0,0.45)_100%)]" />
@@ -521,14 +608,22 @@ export default function PreviewStage({
       )}
 
       {/* ------- corner cue dropdowns ------- */}
-      {project.cueGroups.map((group) => {
+      {project.cueGroups.map((group, groupIndex) => {
         const GroupIcon = ICONS[group.icon];
         const open = openGroupId === group.id;
-        const sideClass = group.side === "left" ? "left-5" : "right-5";
+        const sideIndex = project.cueGroups
+          .slice(0, groupIndex)
+          .filter((candidate) => candidate.side === group.side).length;
+        const sideOffset = sideIndex * (compactBar ? 184 : 232);
+        const sideStyle =
+          group.side === "left"
+            ? { left: `${20 + sideOffset}px` }
+            : { right: `${20 + sideOffset}px` };
         return (
           <div
             key={group.id}
-            className={cn("absolute bottom-[88px] z-30", compactBar ? "w-44" : "w-56", sideClass)}
+            className={cn("absolute bottom-[88px] z-30", compactBar ? "w-44" : "w-56")}
+            style={sideStyle}
           >
             {open && (
               <div className="anim-fade-up mb-2 overflow-hidden rounded-2xl border border-white/20 bg-black/30 p-2 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.9)] backdrop-blur-2xl">
@@ -651,8 +746,12 @@ export default function PreviewStage({
               </button>
             )}
             <UtilityBtn
-              onClick={() => setRot((r) => ((r + 90) % 360) as 0 | 90 | 180 | 270)}
-              label={`Rotate screen (${rot}°)`}
+              onClick={() => {
+                const next = (rot === 90 ? 0 : 90) as Rotation;
+                setRot(next);
+                setProject((p) => ({ ...p, display: { ...p.display, rotation: next } }));
+              }}
+              label={`Rotate all panels (${rot}°)`}
             >
               <RotateCw
                 className="h-4 w-4 transition-transform duration-500"
@@ -727,7 +826,12 @@ export default function PreviewStage({
                 {project.info.enabled ? project.info.title : "Info panel"}
               </h3>
               <button
-                onClick={() => setInfoOpen(false)}
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setInfoOpen(false);
+                }}
                 className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
                 aria-label="Close info"
               >
@@ -759,15 +863,30 @@ export default function PreviewStage({
               compactBar ? "w-[min(78vw,300px)]" : "w-[min(82vw,420px)]"
             )}
             onClick={(e) => e.stopPropagation()}
-            onTouchStart={(e) => {
-              swipeStart.current = e.touches[0].clientX;
+            style={{ touchAction: "pan-y" }}
+            onPointerDown={(e) => {
+              if (!e.isPrimary) return;
+              swipeStart.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+              e.currentTarget.setPointerCapture?.(e.pointerId);
             }}
-            onTouchEnd={(e) => {
-              if (swipeStart.current == null) return;
-              const dx = e.changedTouches[0].clientX - swipeStart.current;
+            onPointerMove={(e) => {
+              const start = swipeStart.current;
+              if (!start || start.pointerId !== e.pointerId) return;
+              const dx = e.clientX - start.x;
+              const dy = e.clientY - start.y;
+              if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) e.preventDefault();
+            }}
+            onPointerUp={(e) => {
+              const start = swipeStart.current;
+              if (!start || start.pointerId !== e.pointerId) return;
+              const dx = e.clientX - start.x;
+              const dy = e.clientY - start.y;
               swipeStart.current = null;
-              if (Math.abs(dx) < 40) return;
+              if (Math.abs(dx) < 40 || Math.abs(dx) <= Math.abs(dy)) return;
               stepGallery(dx < 0 ? 1 : -1);
+            }}
+            onPointerCancel={() => {
+              swipeStart.current = null;
             }}
             role="dialog"
             aria-label="Image gallery"
@@ -846,7 +965,7 @@ export default function PreviewStage({
       {/* ------- tap to start (ANY tap anywhere dismisses and plays) ------- */}
       {tapStart && !loading && !error && (
         <div
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') startFromTap(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') startFromTap(); }}
           role="button"
           tabIndex={0}
           aria-label="Tap anywhere to start"
@@ -905,6 +1024,7 @@ export default function PreviewStage({
         </span>
       )}
       </div>{/* end scaled overlay */}
+      </div>{/* end rotatable screen */}
     </div>
   );
 }

@@ -67,6 +67,65 @@ export interface LogoConfig {
 
 export type FrameRate = 30 | 40 | 50 | 60;
 
+export type AspectRatioPreset = "original" | "square" | "5:4" | "4:3" | "3:2" | "16:9";
+export type Rotation = 0 | 90 | 180 | 270;
+
+export interface DisplayConfig {
+  aspectRatio: AspectRatioPreset;
+  rotation: Rotation;
+}
+
+export const ASPECT_RATIO_VALUES: Record<AspectRatioPreset, string> = {
+  original: "16 / 9",
+  square: "1 / 1",
+  "5:4": "5 / 4",
+  "4:3": "4 / 3",
+  "3:2": "3 / 2",
+  "16:9": "16 / 9",
+};
+
+export const ASPECT_RATIO_LABELS: Record<AspectRatioPreset, string> = {
+  original: "Original",
+  square: "Square (1:1)",
+  "5:4": "5:4",
+  "4:3": "4:3",
+  "3:2": "3:2",
+  "16:9": "16:9",
+};
+
+export const ROTATION_OPTIONS: { value: Rotation; label: string }[] = [
+  { value: 0, label: "0°" },
+  { value: 90, label: "90°" },
+  { value: 180, label: "180°" },
+  { value: 270, label: "270°" },
+];
+
+export function normalizeAspectRatio(value: string | undefined): AspectRatioPreset {
+  return value && value in ASPECT_RATIO_VALUES ? (value as AspectRatioPreset) : "original";
+}
+
+export function normalizeRotation(value: number | undefined): Rotation {
+  return value === 90 || value === 180 || value === 270 ? value : 0;
+}
+
+export function aspectRatioValue(preset: AspectRatioPreset, sourceRatio = "16 / 9") {
+  return preset === "original" ? sourceRatio : ASPECT_RATIO_VALUES[preset];
+}
+
+export function swapAspectRatio(value: string) {
+  const [w, h] = value.split("/").map(Number);
+  return w > 0 && h > 0 ? `${h} / ${w}` : value;
+}
+
+export function isQuarterTurn(rotation: Rotation) {
+  return rotation === 90 || rotation === 270;
+}
+
+export const DEFAULT_DISPLAY: DisplayConfig = {
+  aspectRatio: "original",
+  rotation: 0,
+};
+
 export interface SliderScene {
   id: string;
   label: string;
@@ -109,6 +168,7 @@ export interface InfoPanel {
 
 export interface Project {
   videoUrl: string;
+  display: DisplayConfig;
   logo: LogoConfig;
   slider: SliderConfig;
   buttons: CueButton[];
